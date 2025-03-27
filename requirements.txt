@@ -1,0 +1,5 @@
+openeo~=0.25.0
+numpy~=1.26.0
+xarray~=2023.10.1
+pytest~=7.4.3
+setuptools~=68.0.0
