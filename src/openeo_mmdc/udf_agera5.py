@@ -5,13 +5,15 @@
 Provide the user-defined function to call MALICE model
 for Sentinel-2 time series embeddings
 """
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 import xarray as xr
 from openeo.metadata import CollectionMetadata
 from openeo.udf import XarrayDataCube
+from openeo.udf.debug import inspect
 NEW_BANDS = [f"F0{i}" for i in range(10)] + [f"F{i}" for i in range(10, 48)]
+print(NEW_BANDS)
 
 def apply_metadata(metadata: CollectionMetadata, context: dict) -> CollectionMetadata:
     """Apply metadata"""
@@ -35,23 +37,18 @@ def check_datacube(cube: xr.DataArray):
 
 def run_date_selection(
         input_data: np.ndarray, dates: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     meteo_data = input_data[:, :-1]
     mask_data = input_data[:, -1]
     where_ref_date = mask_data.sum((1, 2)) > 0
     ref_date = dates[where_ref_date]
-
+    print(meteo_data)
     all_mini_series = [
         meteo_data[idx_date-4:idx_date+2].reshape(48, *mask_data.shape[-2:])
         for idx_date, valid in enumerate(where_ref_date) if valid
     ]
 
-    # for idx_date, valid in enumerate(where_ref_date):
-    #     if valid:
-    #         mini_sits = meteo_data[idx_date-4:idx_date+2]
-    #         mini_sits.reshape(48, *mini_sits.shape[2:])
-
-    return np.ndarray(all_mini_series, dtype=np.float32), ref_date
+    return np.stack(all_mini_series, dtype=np.float32), ref_date
 
 
 def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
@@ -67,10 +64,13 @@ def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
 
     # Build output data array
     mini_series, ref_dates = run_date_selection(cubearray.data, cubearray.t.values)
+    print(mini_series, ref_dates)
+    print(mini_series.shape)
+    print(ref_dates.shape)
     mini_series_cube = xr.DataArray(
         mini_series,
         dims=["t", "bands", "y", "x"],
-        coords=cubearray.coords,
+        coords={"t": ref_dates, "y": cubearray.coords["y"], "x": cubearray.coords["x"]},
     )
 
     return XarrayDataCube(mini_series_cube)

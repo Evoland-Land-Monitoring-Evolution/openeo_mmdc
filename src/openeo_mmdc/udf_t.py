@@ -4,7 +4,7 @@
 """
 Extract dates for AGERA5 mini-time-series
 """
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 import xarray as xr
@@ -14,22 +14,36 @@ from openeo.udf import XarrayDataCube
 
 def apply_metadata(metadata: CollectionMetadata, context: dict) -> CollectionMetadata:
     """Apply metadata"""
-    metadata = metadata.rename_labels(
-        dimension="band",
-        target=["mask"]
-    )
+    # metadata = metadata.rename_labels(
+    #     dimension="band",
+    #     target=["mask_ref", "mask_filter"]
+    # )
+
     return metadata
 
 
-def check_datacube(cube: xr.DataArray):
-    """Check datacube """
-    if cube.data.ndim != 4:
-        raise RuntimeError("DataCube dimensions should be (t,bands, y, x)")
+def compute_dates(cubearray: xr.DataArray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    We compute dates for AGERA5 6 days mini-series.
+    cubearray is masked data of shape T x 1 x H x W,
+    where T is time dimension of the reference image data, T \in [t_1, ..., t_n]
+    For each day t_n we compute the dates of AGERA5 mini-series that are [t_n-4: t_n+1]
+    """
 
-    if cube.data.shape[1] == 10 or cube.data.shape[1] == 6:
-        raise RuntimeError(
-            "DataCube should have at least 3 days of temporal series)"
-        )
+    # We extract the reference dates for time series
+    ref_dates = cubearray.coords["t"].values
+
+    # We get new dates in the following way:
+    # For each day d_n, we extract days [d_n-4: d_n+1]
+    new_t, indices = np.unique([t + np.timedelta64(dd, 'D')
+                                for t in ref_dates for dd in range(-4, 2, 1)], return_index=True)
+
+    # We mark the reference dates d_n as 1, other days as 0
+    reference_index = np.array([t in ref_dates for t in new_t], dtype=np.float32)
+
+    where_ref_date = np.array(np.broadcast_to(reference_index[:, None, None, None], (len(new_t), 1, *cubearray.shape[-2:])))
+    # where_ref_date[:, 1, :, :] = 0
+    return where_ref_date, new_t
 
 def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
     """
@@ -41,20 +55,14 @@ def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
         cubearray = cube
     else:
         cubearray = cube.get_array().copy()
-    # Build output data array
-    ref_dates = cubearray.coords["t"].values
-    reference_index = np.array([[0, 0, 0, 0, 1, 0]
-                                for _ in ref_dates], dtype=np.float32).reshape(-1)
-    new_t, indices = np.unique([t + np.timedelta64(dd, 'D')
-                                for t in ref_dates for dd in range(-4, 2, 1)], return_index=True)
-    reference_index = reference_index[indices]
 
-    where_ref_date = np.broadcast_to(reference_index[:, None, None, None], (len(new_t), 1, *cubearray.shape[-2:]))
-    print(new_t)
+    where_ref_date, new_t = compute_dates(cubearray)
+    print(cubearray)
+    # print(new_t)
     masked_cube = xr.DataArray(
         where_ref_date,
         dims=["t", "bands", "y", "x"],
         coords={"t": new_t, "y": cubearray.coords["y"], "x": cubearray.coords["x"]},
     )
-
+    print(masked_cube)
     return XarrayDataCube(masked_cube)

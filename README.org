@@ -1,0 +1,39 @@
+#+TITLE: openeo_mmdc
+
+[[file:artwork/logo-Evoland-positive.png]]
+
+This repository is part of the [[https://www.evo-land.eu/][EVOLAND Horizon Europe]] project.
+It provides a User Defined Function to extract Sentinel-2 or Sentinel-1 satellite image time series embeddings with MALICE model.
+The input time series can have any length, although the recommended length is between 6 and 18 months.
+The output embeddings have fixed size of (10 x 64) x H x W
+
+The respository include the [[file:src/openeo_mmdc/udf_s2.py][User Defined Function for S2]] and [[file:src/openeo_mmdc/udf_s1_asc.py][User Defined Function for S1]]
+implemented using a ONNX export of the best model, as well as a [[file:src/openeo_mmdc/run.py][runtime script]] allowing to use it with your OpenEO account.
+
+* Installation
+#+begin_src shell
+$ pip install -e git+https://github.com/Evoland-Land-Monitoring-Evolution/openeo_mmdc.git
+#+end_src
+
+* Usage
+
+For Sentinel-1 Ascending embeddings:
+
+#+begin_src shell
+$ run_openeo_mmdc --satellite s1_asc --start_date 2020-07-05 --end_date 2020-09-30 --extent 5.1 5.12 51 51.02 --output results/
+#+end_src
+
+For Sentinel-2 embeddings:
+
+#+begin_src shell
+$ run_openeo_mmdc --satellite s2 --start_date 2020-07-05 --end_date 2020-09-30 --extent 5.1 5.12 51 51.02 --output results/
+#+end_src
+
+* Credits
+
+Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or the European Commission. Neither the European Union nor the European Commission can be held responsible for them.
+
+* Note
+
+This project has been set up using PyScaffold 4.5. For details and usage
+information on PyScaffold see https://pyscaffold.org/.
