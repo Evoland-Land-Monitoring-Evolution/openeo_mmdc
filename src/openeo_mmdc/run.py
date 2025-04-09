@@ -120,33 +120,49 @@ def process(parameters: Parameters, output: str) -> None:
 
             sat_cube_orbit = sat_cube_orbit.rename_labels(dimension="bands", target=["VV_" + orbit, "VH_" + orbit,
                                                                                      "local_incidence_angle_" + orbit])
-            VH = sat_cube_orbit.band("VH_" + orbit)
-            VV = sat_cube_orbit.band("VV_" + orbit)
-            ratio = VH / VV
-            # print("ratio", ratio)
-            ratio = ratio.add_dimension(type='bands', name='bands', label=('ratio_' + orbit))
-            # print("metadata", ratio.metadata)
-            sat_cube_orbit = sat_cube_orbit.merge_cubes(ratio)
+            # VH = sat_cube_orbit.band("VH_" + orbit)
+            # VV = sat_cube_orbit.band("VV_" + orbit)
+            # ratio = VH / VV
+            # # print("ratio", ratio)
+            # ratio = ratio.add_dimension(type='bands', name='bands', label=('ratio_' + orbit))
+            # # print("metadata", ratio.metadata)
+            # sat_cube_orbit = sat_cube_orbit.merge_cubes(ratio)
 
             if sat_cube is None:
                 sat_cube = sat_cube_orbit
             else:
-                sat_cube = sat_cube.merge_cubes(sat_cube_orbit, overlap_resolver="max")
+                sat_cube = sat_cube.merge_cubes(sat_cube_orbit)
             print("metadata s1", sat_cube_orbit.metadata)
 
         print("Create mask")
+
+        udf_file_match_s1 = os.path.join(os.path.dirname(__file__), f"udf_find_match_s1.py")
+        udf_file_match_s1 = openeo.UDF.from_file(udf_file_match_s1, runtime="Python-Jep")
+        sat_cube = sat_cube.apply_dimension(udf_file_match_s1)
+
+        job = sat_cube.create_job(
+            title=f"mmdc_{parameters.satellite}_s1",
+            description=f"mmdc_{parameters.satellite}",
+            out_format="netCDF",
+            sample_by_feature=False,
+            # job_options=job_options,
+        )
+        job.start_job()
+        exit()
+
         mask_dates = sat_cube.band("VV_ASCENDING") * 0
 
     mask_dates = mask_dates.add_dimension(name="bands", label="mask", type="bands")
     print("mask dates", mask_dates.metadata)
-    # job = mask_dates.create_job(
-    #     title=f"mmdc_{parameters.satellite}_mask_dates",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
+    job = mask_dates.create_job(
+        title=f"mmdc_{parameters.satellite}_mask_dates",
+        description=f"mmdc_{parameters.satellite}",
+        out_format="netCDF",
+        sample_by_feature=False,
+        # job_options=job_options,
+    )
+    job.start_job()
+    exit()
     udf_file_t = os.path.join(os.path.dirname(__file__), f"udf_t.py")
     udf_time = openeo.UDF.from_file(udf_file_t, runtime="Python-Jep")
     mask_for_agera5 = mask_dates.apply_neighborhood(udf_time, size=[
