@@ -40,15 +40,21 @@ def run_date_selection(
 ) -> Tuple[np.ndarray, np.ndarray]:
     meteo_data = input_data[:, :-1]
     mask_data = input_data[:, -1]
+
+    # We choose agera5 dates that are relevant to S1/S2 mask
+    valid_dates = np.isnan(mask_data).mean((1, 2)) < 0.95
+    meteo_data = meteo_data[valid_dates]
+    mask_data = mask_data[valid_dates]
+    dates = dates[valid_dates]
+
     where_ref_date = mask_data.sum((1, 2)) > 0
     ref_date = dates[where_ref_date]
-    print(meteo_data)
     all_mini_series = [
         meteo_data[idx_date-4:idx_date+2].reshape(48, *mask_data.shape[-2:])
         for idx_date, valid in enumerate(where_ref_date) if valid
     ]
 
-    return np.stack(all_mini_series, dtype=np.float32), ref_date
+    return np.stack(all_mini_series).astype(np.float32), ref_date
 
 
 def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
@@ -64,9 +70,9 @@ def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
 
     # Build output data array
     mini_series, ref_dates = run_date_selection(cubearray.data, cubearray.t.values)
-    print(mini_series, ref_dates)
-    print(mini_series.shape)
-    print(ref_dates.shape)
+    # print(mini_series, ref_dates)
+    # print(mini_series.shape)
+    # print(ref_dates.shape)
     mini_series_cube = xr.DataArray(
         mini_series,
         dims=["t", "bands", "y", "x"],

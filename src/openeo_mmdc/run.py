@@ -148,21 +148,21 @@ def process(parameters: Parameters, output: str) -> None:
             # job_options=job_options,
         )
         job.start_job()
-        exit()
+        # exit()
 
         mask_dates = sat_cube.band("VV_ASCENDING") * 0
 
     mask_dates = mask_dates.add_dimension(name="bands", label="mask", type="bands")
     print("mask dates", mask_dates.metadata)
-    job = mask_dates.create_job(
-        title=f"mmdc_{parameters.satellite}_mask_dates",
-        description=f"mmdc_{parameters.satellite}",
-        out_format="netCDF",
-        sample_by_feature=False,
-        # job_options=job_options,
-    )
-    job.start_job()
-    exit()
+    # job = mask_dates.create_job(
+    #     title=f"mmdc_{parameters.satellite}_mask_dates",
+    #     description=f"mmdc_{parameters.satellite}",
+    #     out_format="netCDF",
+    #     sample_by_feature=False,
+    #     # job_options=job_options,
+    # )
+    # job.start_job()
+    # exit()
     udf_file_t = os.path.join(os.path.dirname(__file__), f"udf_t.py")
     udf_time = openeo.UDF.from_file(udf_file_t, runtime="Python-Jep")
     mask_for_agera5 = mask_dates.apply_neighborhood(udf_time, size=[
@@ -173,15 +173,15 @@ def process(parameters: Parameters, output: str) -> None:
          "value": 256,
          "unit": "px"},
     ], overlap=[])
-    job = mask_for_agera5.create_job(
-        title=f"mmdc_{parameters.satellite}_mask_for_agera5",
-        description=f"mmdc_{parameters.satellite}",
-        out_format="netCDF",
-        sample_by_feature=False,
-        # job_options=job_options,
-    )
-    job.start_job()
-    exit()
+    # job = mask_for_agera5.create_job(
+    #     title=f"mmdc_{parameters.satellite}_mask_for_agera5",
+    #     description=f"mmdc_{parameters.satellite}",
+    #     out_format="netCDF",
+    #     sample_by_feature=False,
+    #     # job_options=job_options,
+    # )
+    # job.start_job()
+    # exit()
     print("Get AGERA")
     start_meteo = (
             datetime.datetime.strptime(parameters.start_date, '%Y-%m-%d') - datetime.timedelta(days=4)
@@ -208,24 +208,24 @@ def process(parameters: Parameters, output: str) -> None:
         sat_cube, method="cubic"
     )
     agera5 = agera5.filter_spatial(geometry_box)
-    job = agera5.create_job(
-        title=f"mmdc_{parameters.satellite}_agera5_filter_spatial",
-        description=f"mmdc_{parameters.satellite}",
-        out_format="netCDF",
-        sample_by_feature=False,
-        # job_options=job_options,
-    )
-    job.start_job()
+    # job = agera5.create_job(
+    #     title=f"mmdc_{parameters.satellite}_agera5_filter_spatial",
+    #     description=f"mmdc_{parameters.satellite}",
+    #     out_format="netCDF",
+    #     sample_by_feature=False,
+    #     # job_options=job_options,
+    # )
+    # job.start_job()
     agera5 = agera5.mask(mask_for_agera5 * 0)
-    job = agera5.create_job(
-        title=f"mmdc_{parameters.satellite}_agera5_resample_mask_filter",
-        description=f"mmdc_{parameters.satellite}",
-        out_format="netCDF",
-        sample_by_feature=False,
-        # job_options=job_options,
-    )
-    job.start_job()
-    exit()
+    # job = agera5.create_job(
+    #     title=f"mmdc_{parameters.satellite}_agera5_resample_mask_filter",
+    #     description=f"mmdc_{parameters.satellite}",
+    #     out_format="netCDF",
+    #     sample_by_feature=False,
+    #     # job_options=job_options,
+    # )
+    # job.start_job()
+    # exit()
     agera5 = agera5.merge_cubes(mask_for_agera5)
     print("metadata", agera5.metadata)
 
@@ -251,7 +251,14 @@ def process(parameters: Parameters, output: str) -> None:
     # Reshape them to T x 48 x H x W, where T is length of image SITS
     udf_file_agera5 = os.path.join(os.path.dirname(__file__), f"udf_agera5.py")
     udf_agera5 = openeo.UDF.from_file(udf_file_agera5, runtime="Python-Jep")
-    mini_agera5 = agera5.apply(udf_agera5)
+    mini_agera5 = agera5.apply_neighborhood(udf_agera5, size=[
+        {"dimension": "x",
+         "value": 256,
+         "unit": "px"},
+        {"dimension": "y",
+         "value": 256,
+         "unit": "px"},
+    ], overlap=[])
     # job = mini_agera5.create_job(
     #     title=f"mmdc_{parameters.satellite}_mini",
     #     description=f"mmdc_{parameters.satellite}",

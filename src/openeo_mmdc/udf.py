@@ -127,7 +127,8 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
     sys.path.insert(0, "tmp/extra_venv")
     import onnxruntime as ort
 
-    model_file = f"tmp/extra_files/mmdc_experts_{satellite}.onnx"
+    # model_file = f"tmp/extra_files/mmdc_experts_{satellite}.onnx"
+    model_file = f"../../models/mmdc_experts_{satellite}.onnx"
 
     # ONNX inference session options
     so = ort.SessionOptions()
@@ -152,9 +153,12 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
             input_data[:, 14:14 + 48].astype(np.float32),
             input_data[:, -1].astype(np.float32)
         )
-
+        print(dem.shape)
         image = s2_ref.clip(0, 15000)
+        print(image.shape
+              )
         dem = np.stack([dem_height_aspect(d) for d in dem])
+        print(dem.shape)
         angles = s2_angles_processing(s2_angles)
 
     elif input_data.shape[1] == 15:
@@ -202,12 +206,16 @@ def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
         cubearray = cube
     else:
         cubearray = cube.get_array().copy()
-    encoded = run_inference(cubearray.data, context["satellite"])
+
+    # satellite = context["satellite"]
+    satellite = "s1"
+
+    encoded = run_inference(cubearray.data, satellite)
     # Build output data array
     predicted_cube = xr.DataArray(
         encoded,
         dims=["t", "bands", "y", "x"],
-        coords=cubearray.coords,
+        coords={"t": cubearray.coords["t"], "y": cubearray.coords["y"], "x": cubearray.coords["x"]},
     )
 
     return XarrayDataCube(predicted_cube)
