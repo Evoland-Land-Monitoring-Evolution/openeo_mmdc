@@ -2,8 +2,8 @@
 
 # Copyright: (c) 2025 CESBIO / Centre National d'Etudes Spatiales
 """
-Provide the user-defined function to call MALICE model
-for Sentinel-2 time series embeddings
+Provide the user-defined function to call MMDC model
+for Sentinel-1/2 image embeddings
 """
 import sys
 from typing import Dict
@@ -14,8 +14,7 @@ import xarray as xr
 from openeo.metadata import CollectionMetadata
 from openeo.udf import XarrayDataCube
 
-# # Names for new 640 bands. In format Q..F..
-# NEW_BANDS = [f"F0{i}" for i in range(10)] + [f"F{i}" for i in range(10, 64)]
+# # Names for new embedding
 NEW_BANDS = ["F01_mu", "F02_mu", "F03_mu", "F04_mu", "F05_mu", "F06_mu",
              "F01_logvar", "F02_logvar", "F03_logvar", "F04_logvar", "F05_logvar", "F06_logvar"]
 
@@ -66,15 +65,14 @@ def s2_angles_processing(s2_angles_data: np.ndarray) -> np.ndarray:
 
 def s1_angles_processing(angles_s1_asc: np.array, angles_s1_desc: np.array) -> np.array:
     """Transform S1 angles"""
-    angles = np.concat((angles_s1_asc, angles_s1_desc), 1)
+    angles = np.concatenate((angles_s1_asc, angles_s1_desc), 1)
 
-    processed_angles = np.zeros_like(angles)
-    processed_angles[(angles != np.nan) | (angles != 0)] = np.cos(
-        np.deg2rad(angles[(angles != np.nan) | (angles != 0)])
+    processed_angles = angles.copy()
+    processed_angles[(processed_angles != np.nan) | (processed_angles != 0)] = np.cos(
+        np.deg2rad(angles[(processed_angles != np.nan) | (processed_angles != 0)])
     )
 
     return processed_angles
-
 
 def apply_log_to_s1(data: np.array) -> np.array:
     """
@@ -84,6 +82,9 @@ def apply_log_to_s1(data: np.array) -> np.array:
     clip_max: float = 2.0
 
     nan_idxs = ~np.isnan(data)
+    print("sum", (data<= 1e-4).sum())
+    print(np.isnan(np.log10(np.clip(data[nan_idxs], clip_min, clip_max))))
+
     data[nan_idxs] = np.log10(np.clip(data[nan_idxs], clip_min, clip_max))
     return data
 
@@ -119,16 +120,15 @@ def dem_height_aspect(dem_data: np.ndarray) -> np.ndarray:
 
 def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
     """
-    Inference function for Sentinel-2 embeddings with prosailVAE.
+    Inference function for Sentinel-2 embeddings with MMDC.
     The input should be in shape (B, C, H, W)
-    The output shape is (B, 22, H, W)
+    The output shape is (B, 12, H, W)
     """
     # First get virtualenv
     sys.path.insert(0, "tmp/extra_venv")
     import onnxruntime as ort
 
-    # model_file = f"tmp/extra_files/mmdc_experts_{satellite}.onnx"
-    model_file = f"../../models/mmdc_experts_{satellite}.onnx"
+    model_file = f"tmp/extra_files/mmdc_experts_{satellite}.onnx"
 
     # ONNX inference session options
     so = ort.SessionOptions()
@@ -147,51 +147,71 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
 
     if satellite.lower() == "s2" or input_data.shape[1] == 63:
         # We transform input data in right format
-        s2_ref, s2_angles, meteo, dem = (
-            input_data[:, :10].astype(np.float32),
-            input_data[:, 10:14].astype(np.float32),
-            input_data[:, 14:14 + 48].astype(np.float32),
-            input_data[:, -1].astype(np.float32)
+        image, s2_angles, meteo, dem = (
+            input_data[:, :10],
+            input_data[:, 10:14],
+            input_data[:, 14:14 + 48],
+            input_data[:, -1]
         )
-        print(dem.shape)
-        image = s2_ref.clip(0, 15000)
-        print(image.shape
-              )
+
         dem = np.stack([dem_height_aspect(d) for d in dem])
-        print(dem.shape)
         angles = s2_angles_processing(s2_angles)
 
-    elif input_data.shape[1] == 15:
-        s1_asc, s1_desc, s1_angles_asc, s1_angles_desc, meteo, dem = (
-            input_data[:, :2].astype(np.float32),
-            input_data[:, 2:3].astype(np.float32),
-            input_data[:, 3:5].astype(np.float32),
-            input_data[:, 5:6].astype(np.float32),
-            input_data[:, 6:6 + 48].astype(np.float32),
-            input_data[:, -1].astype(np.float32)
+    elif satellite.lower() == "s1" or input_data.shape[1] == 55:
+        input_data[input_data == np.inf] = np.nan
+        input_data[input_data == -np.inf] = np.nan
+
+        s1_asc, s1_angles_asc, s1_desc, s1_angles_desc, meteo, dem = (
+            input_data[:, :2],
+            input_data[:, 2:3],
+            input_data[:, 3:5],
+            input_data[:, 5:6],
+            input_data[:, 6:6 + 48],
+            input_data[:, -1]
         )
-        image = np.concat(
-            (
-                s1_asc, s1_asc[:, 1] / s1_asc[:, 0] + 3e-05,
-                s1_desc, s1_desc[:, 1] / s1_desc[:, 0] + 3e-05
-            ),
+        s1_asc[s1_asc == 0] = np.nan
+        s1_desc[s1_desc == 0] = np.nan
+
+        s1_angles_asc[s1_angles_asc == 0] = np.nan
+        s1_angles_desc[s1_angles_desc == 0] = np.nan
+
+        nan_asc = ~(np.isnan(s1_asc).sum(1) > 0)
+        nan_desc = ~(np.isnan(s1_desc).sum(1) > 0)
+
+        ratio_asc = np.full_like(nan_asc, np.nan, dtype=np.float32)
+        ratio_desc = np.full_like(nan_desc, np.nan, dtype=np.float32)
+
+        ratio_asc[nan_asc] = (s1_asc[:, 1] / s1_asc[:, 0] + 1e-05)[nan_asc]
+        ratio_desc[nan_desc] = (s1_desc[:, 1] / s1_desc[:, 0] + 1e-05)[nan_desc]
+
+        image = np.concatenate(
+            [
+                s1_asc, ratio_asc[:, None],
+                s1_desc, ratio_desc[:, None]
+            ],
             axis=1
         )
         image = apply_log_to_s1(image)
+
         dem = np.stack([dem_height_aspect(d) for d in dem])
         angles = s1_angles_processing(s1_angles_asc, s1_angles_desc)
+
     else:
         raise IndexError
 
     input = {
-        "img": image,
-        "angles": angles,
-        "dem": dem,
-        "meteo": meteo,
+        "img": image.astype(np.float32),
+        "angles": angles.astype(np.float32),
+        "dem": dem.astype(np.float32),
+        "meteo": meteo.astype(np.float32),
     }
 
+    print("starting inference")
     # Get the ouput of the exported model
     res_mu, res_logvar = ort_session.run(None, input, run_options=ro)
+    print(np.nanmax(res_mu, (-1, -2)))
+    print(np.nanmin(res_mu, (-1, -2)))
+    print(res_mu.shape)
     result = np.concatenate((res_mu, res_logvar), axis=1, dtype=np.float32)
     return result
 
@@ -207,10 +227,9 @@ def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
     else:
         cubearray = cube.get_array().copy()
 
-    # satellite = context["satellite"]
-    satellite = "s1"
-
+    satellite = context["satellite"]
     encoded = run_inference(cubearray.data, satellite)
+
     # Build output data array
     predicted_cube = xr.DataArray(
         encoded,

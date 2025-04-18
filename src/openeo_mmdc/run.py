@@ -32,7 +32,6 @@ _logger = logging.getLogger(__name__)
 
 def default_bands_list_agera5() -> list[str]:
     return [
-        "wind-speed",
         "dewpoint-temperature",
         "precipitation-flux",
         "solar-radiation-flux",
@@ -40,6 +39,7 @@ def default_bands_list_agera5() -> list[str]:
         "temperature-mean",
         "temperature-min",
         "vapour-pressure",
+        "wind-speed",
     ]
 
 
@@ -67,7 +67,7 @@ class Parameters:
     openeo_instance: str = "openeo.vito.be"
     collection: str = "SENTINEL2_L2A_SENTINELHUB"
     satellite: str = "s2"
-    patch_size: int = 128
+    patch_size: int = 256
     overlap: Optional[int] = 0
 
 
@@ -91,6 +91,7 @@ def process(parameters: Parameters, output: str) -> None:
             max_cloud_cover=parameters.max_cloud_cover,
             fetch_metadata=True
         )
+
         print("Create mask")
         mask_dates = sat_cube.band("B02") * 0
 
@@ -120,13 +121,6 @@ def process(parameters: Parameters, output: str) -> None:
 
             sat_cube_orbit = sat_cube_orbit.rename_labels(dimension="bands", target=["VV_" + orbit, "VH_" + orbit,
                                                                                      "local_incidence_angle_" + orbit])
-            # VH = sat_cube_orbit.band("VH_" + orbit)
-            # VV = sat_cube_orbit.band("VV_" + orbit)
-            # ratio = VH / VV
-            # # print("ratio", ratio)
-            # ratio = ratio.add_dimension(type='bands', name='bands', label=('ratio_' + orbit))
-            # # print("metadata", ratio.metadata)
-            # sat_cube_orbit = sat_cube_orbit.merge_cubes(ratio)
 
             if sat_cube is None:
                 sat_cube = sat_cube_orbit
@@ -134,35 +128,16 @@ def process(parameters: Parameters, output: str) -> None:
                 sat_cube = sat_cube.merge_cubes(sat_cube_orbit)
             print("metadata s1", sat_cube_orbit.metadata)
 
-        print("Create mask")
-
         udf_file_match_s1 = os.path.join(os.path.dirname(__file__), f"udf_find_match_s1.py")
-        udf_file_match_s1 = openeo.UDF.from_file(udf_file_match_s1, runtime="Python-Jep")
-        sat_cube = sat_cube.apply_dimension(udf_file_match_s1)
+        udf_match_s1 = openeo.UDF.from_file(udf_file_match_s1, runtime="Python-Jep")
+        sat_cube = sat_cube.apply_dimension(udf_match_s1)
 
-        job = sat_cube.create_job(
-            title=f"mmdc_{parameters.satellite}_s1",
-            description=f"mmdc_{parameters.satellite}",
-            out_format="netCDF",
-            sample_by_feature=False,
-            # job_options=job_options,
-        )
-        job.start_job()
-        # exit()
-
+        print("Create mask")
         mask_dates = sat_cube.band("VV_ASCENDING") * 0
 
     mask_dates = mask_dates.add_dimension(name="bands", label="mask", type="bands")
     print("mask dates", mask_dates.metadata)
-    # job = mask_dates.create_job(
-    #     title=f"mmdc_{parameters.satellite}_mask_dates",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
-    # exit()
+
     udf_file_t = os.path.join(os.path.dirname(__file__), f"udf_t.py")
     udf_time = openeo.UDF.from_file(udf_file_t, runtime="Python-Jep")
     mask_for_agera5 = mask_dates.apply_neighborhood(udf_time, size=[
@@ -173,15 +148,8 @@ def process(parameters: Parameters, output: str) -> None:
          "value": 256,
          "unit": "px"},
     ], overlap=[])
-    # job = mask_for_agera5.create_job(
-    #     title=f"mmdc_{parameters.satellite}_mask_for_agera5",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
-    # exit()
+
+
     print("Get AGERA")
     start_meteo = (
             datetime.datetime.strptime(parameters.start_date, '%Y-%m-%d') - datetime.timedelta(days=4)
@@ -192,7 +160,6 @@ def process(parameters: Parameters, output: str) -> None:
 
     agera5 = connection.load_collection(
         "AGERA5",
-        # spatial_extent=parameters.spatial_extent,
         temporal_extent=[start_meteo, end_meteo],
         bands=default_bands_list_agera5(),
     )
@@ -208,36 +175,10 @@ def process(parameters: Parameters, output: str) -> None:
         sat_cube, method="cubic"
     )
     agera5 = agera5.filter_spatial(geometry_box)
-    # job = agera5.create_job(
-    #     title=f"mmdc_{parameters.satellite}_agera5_filter_spatial",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
     agera5 = agera5.mask(mask_for_agera5 * 0)
-    # job = agera5.create_job(
-    #     title=f"mmdc_{parameters.satellite}_agera5_resample_mask_filter",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
-    # exit()
+
     agera5 = agera5.merge_cubes(mask_for_agera5)
     print("metadata", agera5.metadata)
-
-    # job = agera5.create_job(
-    #     title=f"mmdc_{parameters.satellite}_agera5_with_mask",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
-    # exit()
 
     # Handle optional overlap parameter
     overlap = []
@@ -259,25 +200,7 @@ def process(parameters: Parameters, output: str) -> None:
          "value": 256,
          "unit": "px"},
     ], overlap=[])
-    # job = mini_agera5.create_job(
-    #     title=f"mmdc_{parameters.satellite}_mini",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     job_options={
-    #         "executor-memory": "4G",
-    #         "executor-memoryOverhead": "4G",  # default 2G
-    #         "executor-cores": 2,
-    #         "task-cpus": 1,
-    #         "executor-request-cores": "400m",
-    #         "max-executors": "100",
-    #         "driver-memory": "16G",
-    #         "driver-memoryOverhead": "16G",
-    #         "driver-cores": 5,
-    #     },
-    # )
-    # job.start_job()
-    # exit()
+
     dem = connection.load_collection(
         "COPERNICUS_30",
         # spatial_extent=parameters.spatial_extent,
@@ -287,57 +210,22 @@ def process(parameters: Parameters, output: str) -> None:
     dem = dem.resample_cube_spatial(sat_cube, method="cubic").filter_spatial(geometry_box)
 
     sat_cube = sat_cube.merge_cubes(mini_agera5).merge_cubes(dem.max_time())
-    job_options = {
-        "udf-dependency-archives": [
-            f"{DEPENDENCIES_URL}#tmp/extra_venv",
-            f"{MODEL_URL}#tmp/extra_files",
-        ],
-        "executor-memory": "10G",
-        "executor-memoryOverhead": "20G",  # default 2G
-        "executor-cores": 2,
-        "task-cpus": 1,
-        "executor-request-cores": "400m",
-        "max-executors": "100",
-        "driver-memory": "16G",
-        "driver-memoryOverhead": "16G",
-        "driver-cores": 5,
-    }
     print("metadata", sat_cube.metadata)
-    job = sat_cube.create_job(
-        title=f"mmdc_{parameters.satellite}_collection",
-        description=f"mmdc_{parameters.satellite}",
-        out_format="netCDF",
-        sample_by_feature=False,
-        job_options=job_options,
-    )
-    job.start_job()
-    exit()
 
     # job = sat_cube.create_job(
-    #     title=f"mmdc_{parameters.satellite}_xor",
+    #     title=f"mmdc_{parameters.satellite}_collection",
     #     description=f"mmdc_{parameters.satellite}",
     #     out_format="netCDF",
     #     sample_by_feature=False,
-    #     # job_options=job_options,
+    #     job_options=job_options,
     # )
     # job.start_job()
-    # print("merged metadata", sat_cube.metadata)
     # exit()
-    # udf_file = os.path.join(os.path.dirname(__file__), f"udf_{parameters.satellite}.py")
+
     udf_file = os.path.join(os.path.dirname(__file__), f"udf.py")
     udf = openeo.UDF.from_file(udf_file, runtime="Python-Jep", context={"from_parameter": "context"})
 
-    # job = sat_cube.create_job(
-    #     title=f"mmdc_{parameters.satellite}",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     # job_options=job_options,
-    # )
-    # job.start_job()
-    # exit()
-    # Process the cube with the UDF
-
+    # Process the final cube with the inference UDF
     job_options = {
         "udf-dependency-archives": [
             f"{DEPENDENCIES_URL}#tmp/extra_venv",
@@ -355,7 +243,7 @@ def process(parameters: Parameters, output: str) -> None:
         "logging-threshold": "info",
     }
 
-    malice_sat_cube = sat_cube.apply_neighborhood(
+    mmdc_sat_cube = sat_cube.apply_neighborhood(
         udf,
         size=[
             {"dimension": "x",
@@ -369,7 +257,7 @@ def process(parameters: Parameters, output: str) -> None:
         context={"satellite": parameters.satellite.lower()}
     )
 
-    download_job1 = malice_sat_cube.save_result("netCDF").create_job(
+    download_job1 = mmdc_sat_cube.save_result("netCDF").create_job(
         title=f"mmdc_{parameters.satellite}", job_options=job_options
     )
 
@@ -424,7 +312,7 @@ def parse_args(args):
     parser.add_argument(
         "--overlap",
         required=False,
-        default=10,
+        default=28,
         type=int,
         help="Overlap between patches to avoid border effects",
     )

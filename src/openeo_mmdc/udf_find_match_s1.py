@@ -2,10 +2,8 @@
 
 # Copyright: (c) 2025 CESBIO / Centre National d'Etudes Spatiales
 """
-Provide the user-defined function to call MALICE model
-for Sentinel-2 time series embeddings
+Match S1 ASC and DESC images by date
 """
-import sys
 from typing import Dict, Tuple
 
 import numpy as np
@@ -14,24 +12,18 @@ import xarray as xr
 from openeo.metadata import CollectionMetadata
 from openeo.udf import XarrayDataCube
 
-# # Names for new 640 bands. In format Q..F..
-# NEW_BANDS = [f"F0{i}" for i in range(10)] + [f"F{i}" for i in range(10, 64)]
-NEW_BANDS = ["F01_mu", "F02_mu", "F03_mu", "F04_mu", "F05_mu", "F06_mu",
-             "F01_logvar", "F02_logvar", "F03_logvar", "F04_logvar", "F05_logvar", "F06_logvar"]
 
-
-#
-#
 def apply_metadata(metadata: CollectionMetadata, context: dict) -> CollectionMetadata:
     """Apply metadata"""
     return metadata.rename_labels(
         dimension="band",
-        target=["1", "2", "3", "4", "5", "6"]
+        target=['VV_ASCENDING', 'VH_ASCENDING', 'local_incidence_angle_ASCENDING',
+                'VV_DESCENDING', 'VH_DESCENDING', 'local_incidence_angle_DESCENDING']
     )
 
 
 def match_asc_desc_both_available(
-    days_asc: np.ndarray, days_desc: np.ndarray, tolerance: int = 1
+        days_asc: np.ndarray, days_desc: np.ndarray, tolerance: int = 1
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Match Asc et Desc dates when both orbits are available.
@@ -70,7 +62,7 @@ def match_asc_desc_both_available(
 
 
 def match_asc_desc(
-    days_asc: np.ndarray, days_desc: np.ndarray, tolerance: int = 1
+        days_asc: np.ndarray, days_desc: np.ndarray, tolerance: int = 1
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Match asc and desc orbits to find co-ocurences
@@ -94,13 +86,13 @@ def match_asc_desc(
     return asc_ind, desc_ind, days_s1
 
 
-def run_matching(input_data: xr.DataArray, tolerance: int = 2) -> Tuple[np.ndarray, np.ndarray]:
+def run_matching(input_data: xr.DataArray, tolerance: int = 1) -> Tuple[np.ndarray, np.ndarray]:
     """
-
+    Match S1 ASC and S1 DESC dates
     """
-    dates = input_data.coords["t"]
+    dates = input_data.coords["t"].values
 
-    dates = np.array([np.datetime64(str(d)) for d in dates.to_numpy()])
+    dates = np.array([np.datetime64(str(d)) for d in dates])
 
     valid_s1_asc = (np.isnan(input_data.data[:, 0])).mean((1, 2)) < 0.98
     valid_s1_desc = (np.isnan(input_data.data[:, 3])).mean((1, 2)) < 0.98
@@ -112,12 +104,10 @@ def run_matching(input_data: xr.DataArray, tolerance: int = 2) -> Tuple[np.ndarr
 
     new_data = np.full((len(days_s1), 6, *input_data.data.shape[-2:]), np.nan)
 
-
     new_data[asc_ind, :3] = input_data.data[valid_s1_asc, :3]
     new_data[desc_ind, 3:] = input_data.data[valid_s1_desc, 3:]
 
-
-    return new_data, days_s1
+    return new_data.astype(np.float32), days_s1
 
 
 def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
@@ -131,12 +121,11 @@ def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
     else:
         cubearray = cube.get_array().copy()
     matched, new_t = run_matching(cubearray)
+
     # Build output data array
-    print(cubearray)
     predicted_cube = xr.DataArray(
         matched,
         dims=cubearray.dims,
         coords={"t": new_t, "y": cubearray.coords["y"], "x": cubearray.coords["x"]},
     )
-    print(predicted_cube)
     return XarrayDataCube(predicted_cube)
