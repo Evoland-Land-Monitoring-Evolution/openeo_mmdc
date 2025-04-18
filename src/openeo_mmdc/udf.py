@@ -9,12 +9,11 @@ import sys
 from typing import Dict
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 from openeo.metadata import CollectionMetadata
 from openeo.udf import XarrayDataCube
 
-# # Names for new embedding
+# Names for embedding band names
 NEW_BANDS = ["F01_mu", "F02_mu", "F03_mu", "F04_mu", "F05_mu", "F06_mu",
              "F01_logvar", "F02_logvar", "F03_logvar", "F04_logvar", "F05_logvar", "F06_logvar"]
 
@@ -32,9 +31,9 @@ def check_datacube(cube: xr.DataArray):
     if cube.data.ndim != 4:
         raise RuntimeError("DataCube dimensions should be (t,bands, y, x)")
 
-    if cube.data.shape[1] == 10 or cube.data.shape[1] == 6:
+    if cube.data.shape[1] == 55 or cube.data.shape[1] == 63:
         raise RuntimeError(
-            "DataCube should have at least 3 days of temporal series)"
+            "Wrong number of input bands"
         )
 
 
@@ -74,17 +73,15 @@ def s1_angles_processing(angles_s1_asc: np.array, angles_s1_desc: np.array) -> n
 
     return processed_angles
 
+
 def apply_log_to_s1(data: np.array) -> np.array:
     """
-    Apply log to S1 data
+    Apply log to S1 data, ignore nans
     """
     clip_min: float = 1e-4
     clip_max: float = 2.0
 
     nan_idxs = ~np.isnan(data)
-    print("sum", (data<= 1e-4).sum())
-    print(np.isnan(np.log10(np.clip(data[nan_idxs], clip_min, clip_max))))
-
     data[nan_idxs] = np.log10(np.clip(data[nan_idxs], clip_min, clip_max))
     return data
 
@@ -120,9 +117,11 @@ def dem_height_aspect(dem_data: np.ndarray) -> np.ndarray:
 
 def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
     """
-    Inference function for Sentinel-2 embeddings with MMDC.
-    The input should be in shape (B, C, H, W)
+    Inference function for Sentinel-1/2 embeddings with MMDC.
+    The input should be in shape (B, C, H, W), where C_S1=55 and C_S2=63
     The output shape is (B, 12, H, W)
+    The embeddings come in shape of distribution, we have 6 distributions in total.
+    Each is characterized by its mean and logvar
     """
     # First get virtualenv
     sys.path.insert(0, "tmp/extra_venv")
@@ -145,8 +144,8 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
     ro = ort.RunOptions()
     ro.add_run_config_entry("log_severity_level", "3")
 
+    # We transform input data in right format
     if satellite.lower() == "s2" or input_data.shape[1] == 63:
-        # We transform input data in right format
         image, s2_angles, meteo, dem = (
             input_data[:, :10],
             input_data[:, 10:14],
@@ -175,6 +174,8 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
         s1_angles_asc[s1_angles_asc == 0] = np.nan
         s1_angles_desc[s1_angles_desc == 0] = np.nan
 
+
+        # We compute VH/VV ratio for both ASC and DESC orbits
         nan_asc = ~(np.isnan(s1_asc).sum(1) > 0)
         nan_desc = ~(np.isnan(s1_desc).sum(1) > 0)
 
@@ -191,8 +192,8 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
             ],
             axis=1
         )
-        image = apply_log_to_s1(image)
 
+        image = apply_log_to_s1(image)
         dem = np.stack([dem_height_aspect(d) for d in dem])
         angles = s1_angles_processing(s1_angles_asc, s1_angles_desc)
 
@@ -206,14 +207,10 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
         "meteo": meteo.astype(np.float32),
     }
 
-    print("starting inference")
     # Get the ouput of the exported model
+    print("starting inference")
     res_mu, res_logvar = ort_session.run(None, input, run_options=ro)
-    print(np.nanmax(res_mu, (-1, -2)))
-    print(np.nanmin(res_mu, (-1, -2)))
-    print(res_mu.shape)
-    result = np.concatenate((res_mu, res_logvar), axis=1, dtype=np.float32)
-    return result
+    return np.concatenate((res_mu, res_logvar), axis=1, dtype=np.float32)
 
 
 def apply_datacube(cube: XarrayDataCube, context: Dict) -> XarrayDataCube:
