@@ -1,5 +1,7 @@
 #+TITLE: openeo_mmdc
 
+TO BE UPDATED!!!!
+
 [[file:artwork/logo-Evoland-positive.png]]
 
 This repository is part of the [[https://www.evo-land.eu/][EVOLAND Horizon Europe]] project.
