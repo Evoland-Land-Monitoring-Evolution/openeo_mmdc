@@ -68,7 +68,7 @@ class Parameters:
     collection: str = "SENTINEL2_L2A_SENTINELHUB"
     satellite: str = "s2"
     patch_size: int = 256
-    overlap: Optional[int] = 0
+    overlap: int = 28
 
 
 def process(parameters: Parameters, output: str) -> None:
@@ -135,6 +135,9 @@ def process(parameters: Parameters, output: str) -> None:
         print("Create mask")
         mask_dates = sat_cube.band("VV_ASCENDING") * 0
 
+    # We create a mask with reference dates for AGERA5 6 days mini-series
+    # 1 - day d
+    # 0 - days d-4, d-3, d-2, d-1, d+1
     mask_dates = mask_dates.add_dimension(name="bands", label="mask", type="bands")
     print("mask dates", mask_dates.metadata)
 
@@ -150,7 +153,9 @@ def process(parameters: Parameters, output: str) -> None:
     ], overlap=[])
 
 
-    print("Get AGERA")
+    print(f"Get AGERA... "
+          f"For each available day d of {parameters.satellite.upper()} image, "
+          f"get 6 days mini-series [d-4:d+1] of weather data with 8 variables")
     start_meteo = (
             datetime.datetime.strptime(parameters.start_date, '%Y-%m-%d') - datetime.timedelta(days=4)
     ).strftime('%Y-%m-%d')
@@ -165,6 +170,7 @@ def process(parameters: Parameters, output: str) -> None:
     )
     print("metadata", agera5.metadata)
 
+    # Get the same spatio-temporal extent as S1/S2 images
     geometry_box = geometry.box(
         parameters.spatial_extent["west"],
         parameters.spatial_extent["south"],
@@ -173,8 +179,9 @@ def process(parameters: Parameters, output: str) -> None:
 
     agera5 = agera5.resample_cube_spatial(
         sat_cube, method="cubic"
-    )
-    agera5 = agera5.filter_spatial(geometry_box)
+    ).filter_spatial(geometry_box)
+
+    # Filter datacube dates (does not work)
     agera5 = agera5.mask(mask_for_agera5 * 0)
 
     agera5 = agera5.merge_cubes(mask_for_agera5)
@@ -188,7 +195,7 @@ def process(parameters: Parameters, output: str) -> None:
             {"dimension": "y", "value": parameters.overlap, "unit": "px"},
         ]
 
-    # Get 6 days mini-series of AGERA5 with 8 variables
+    # 6 days mini-series of AGERA5 with 8 variables
     # Reshape them to T x 48 x H x W, where T is length of image SITS
     udf_file_agera5 = os.path.join(os.path.dirname(__file__), f"udf_agera5.py")
     udf_agera5 = openeo.UDF.from_file(udf_file_agera5, runtime="Python-Jep")
@@ -201,14 +208,14 @@ def process(parameters: Parameters, output: str) -> None:
          "unit": "px"},
     ], overlap=[])
 
+    # Get DEM and do spatio-temporal resampling as S1/S2
     dem = connection.load_collection(
         "COPERNICUS_30",
-        # spatial_extent=parameters.spatial_extent,
         bands=["DEM"],
     )
-    print("metadata", sat_cube.metadata)
     dem = dem.resample_cube_spatial(sat_cube, method="cubic").filter_spatial(geometry_box)
 
+    # Merge all datacubes S1/S2 + AGERA5 + DEM
     sat_cube = sat_cube.merge_cubes(mini_agera5).merge_cubes(dem.max_time())
     print("metadata", sat_cube.metadata)
 
@@ -220,12 +227,10 @@ def process(parameters: Parameters, output: str) -> None:
     #     job_options=job_options,
     # )
     # job.start_job()
-    # exit()
-
-    udf_file = os.path.join(os.path.dirname(__file__), f"udf.py")
-    udf = openeo.UDF.from_file(udf_file, runtime="Python-Jep", context={"from_parameter": "context"})
 
     # Process the final cube with the inference UDF
+    udf_file = os.path.join(os.path.dirname(__file__), f"udf.py")
+    udf = openeo.UDF.from_file(udf_file, runtime="Python-Jep", context={"from_parameter": "context"})
     job_options = {
         "udf-dependency-archives": [
             f"{DEPENDENCIES_URL}#tmp/extra_venv",
@@ -257,18 +262,19 @@ def process(parameters: Parameters, output: str) -> None:
         context={"satellite": parameters.satellite.lower()}
     )
 
+    # Download embeddings
     download_job1 = mmdc_sat_cube.save_result("netCDF").create_job(
         title=f"mmdc_{parameters.satellite}", job_options=job_options
     )
-
     download_job1.start_and_wait()
     os.makedirs(output, exist_ok=True)
     download_job1.get_results().download_files(output)
 
-    # download_job2 = malice_sat_cube.save_result("netCDF").create_job(title="sits-orig")
-    # download_job2.start_and_wait()
-    # os.makedirs(os.path.join(output, "original"), exist_ok=True)
-    # download_job2.get_results().download_files(output)
+    # Download the original images
+    download_job2 = mmdc_sat_cube.save_result("netCDF").create_job(title="sits-orig")
+    download_job2.start_and_wait()
+    os.makedirs(os.path.join(output, "original"), exist_ok=True)
+    download_job2.get_results().download_files(output)
 
 
 def parse_args(args):
@@ -309,13 +315,6 @@ def parse_args(args):
     parser.add_argument(
         "--output", type=str, help="Path to ouptput NetCDF file", required=True
     )
-    parser.add_argument(
-        "--overlap",
-        required=False,
-        default=28,
-        type=int,
-        help="Overlap between patches to avoid border effects",
-    )
 
     parser.add_argument(
         "--instance",
@@ -349,7 +348,6 @@ def main(args):
         if args.satellite.lower() == "s2" else "SENTINEL1_GRD",
         satellite=args.satellite.lower(),
         output_file=args.output,
-        overlap=args.overlap,
     )
     print(parameters)
 
