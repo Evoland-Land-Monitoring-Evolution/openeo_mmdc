@@ -1,16 +1,56 @@
 #+TITLE: openeo_mmdc
 
-TO BE UPDATED!!!!
-
 [[file:artwork/logo-Evoland-positive.png]]
 
 This repository is part of the [[https://www.evo-land.eu/][EVOLAND Horizon Europe]] project.
-It provides a User Defined Function to extract Sentinel-2 or Sentinel-1 satellite image time series embeddings with MALICE model.
-The input time series can have any length, although the recommended length is between 6 and 18 months.
-The output embeddings have fixed size of (10 x 64) x H x W
+It provides a User Defined Function to extract single-date Sentinel-2 or Sentinel-1 satellite image embeddings with Muli-Modal DataCube (MMDC) model.
+The input can be a single image of a time series (each image is processed separately). The auxiliary data is used along with image data to improve the quality of the embeddings.
+The output will be in shape T x 12 x H x W.
 
-The respository include the [[file:src/openeo_mmdc/udf_s2.py][User Defined Function for S2]] and [[file:src/openeo_mmdc/udf_s1_asc.py][User Defined Function for S1]]
-implemented using a ONNX export of the best model, as well as a [[file:src/openeo_mmdc/run.py][runtime script]] allowing to use it with your OpenEO account.
+MMDC is a variational autoencoder (VAE) model that is trained in a self-supervised way. Here we provide the pre-trained encoder part of the model to produce the embeddings.
+
+The provided pre-trained encoder produces Sentinel-1 and Sentinel-2 embeddings separately, although, the algorithm is able to produce joint embeddings, if modalities are available for the same date.
+
+To produce the embeddings of Sentinel-1, both Ascending and Descending orbits are used if both are available on the same acquisition day (within 1 day of tolerance).
+Otherwise, only the available orbit is used. To produce Sentinel-1 embeddings, we use VV and VH bands, as well as their ratio VH/VV, and the local incidence angle of each available orbit, otherwise, the missing data is set to zero.
+
+To produce the embeddings of Sentinel-2 images, we use B02, B03, B04, B05, B06, B07, B08, B8A, B11, B12, as well as
+Sun Azimuth Angle, Sun Zenith Angle, View Azimuth Mean angle, and View Zenith Mean angle.
+
+For each image, the auxiliary data should be provided. Here, for each image acquired on day $d$, we use 6-days mini-time series of AGERA5 weather data with 8 variables acquired from $d-4$ to $d+1$:
+
+- dewpoint-temperature (2-meter dewpoint temperature, day average, Kelvin),
+
+- precipitation-flux (total precipitation over one day, mm)
+
+- solar-radiation-flux (Sum of Surface solar radiation downwards, J $m^{-2}$)
+
+- temperature-max (Maximum air temperature at 2-meter, Kelvin)
+
+- temperature-mean (Average air temperature at 2-meter, Kelvin)
+
+- temperature-min (Minimum air temperature at 2-meter, Kelvin)
+
+- vapour-pressure (Average Vapour pressure, hPa)
+
+- wind-speed (average 10-meter wind component, m $s^{-1}$)
+
+We equally use 30m Copernicus Digital Elevation Model (DEM). Both AGERA5 and DEM are spatially resampled to their reference images.
+
+As we use VAE structure, the provided embeddings come in a form of distribution of 6 new features: for each pixel of the input image, we get mean and log-variance values of a new encoded feature resulting in 12 embedded values in total
+
+
+[[file:artwork/mmdc_model_enc.png]]
+
+The repository include several user-defined functions (UDF):
+
+- [[file:src/openeo_mmdc/udf_find_match_s1.py][S1 dates matching UDF]] allowing to match Sentinel-1 Ascending and Descending orbits acquisition dates within 1 day of tolerance,
+
+- [[file:src/openeo_mmdc/udf_t.py][dates masking UDF]] allowing to extract time masks with Sentinel-1/Sentinel-2 reference dates $d$, as well as $[d-4:d+1]$ dates for AGERA5 data.
+
+- [[file:src/openeo_mmdc/udf.py][Infrence UDF]] allowing to produce the image embeddings. The satellite modality ("s2"/"s1") should be passed as the context variable.
+
+as well as a [[file:src/openeo_mmdc/run.py][runtime script]] allowing to produce the embeddings with your OpenEO account.
 
 * Installation
 #+begin_src shell
@@ -22,13 +62,13 @@ $ pip install -e git+https://github.com/Evoland-Land-Monitoring-Evolution/openeo
 For Sentinel-1 Ascending embeddings:
 
 #+begin_src shell
-$ run_openeo_mmdc --satellite s1_asc --start_date 2020-07-05 --end_date 2020-09-30 --extent 5.1 5.12 51 51.02 --output results/
+$ run_openeo_mmdc --satellite s1 --start_date 2020-07-20 --end_date 2020-07-30 --extent 5.1 5.18 51.04 51.12 --output results/
 #+end_src
 
 For Sentinel-2 embeddings:
 
 #+begin_src shell
-$ run_openeo_mmdc --satellite s2 --start_date 2020-07-05 --end_date 2020-09-30 --extent 5.1 5.12 51 51.02 --output results/
+$ run_openeo_mmdc --satellite s2 --start_date 2020-07-20 --end_date 2020-07-30 --extent 5.1 5.18 51.04 51.12 --output results/
 #+end_src
 
 * Credits
