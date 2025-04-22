@@ -23,7 +23,7 @@ For each image, the auxiliary data should be provided. Here, for each image acqu
 
 - precipitation-flux (total precipitation over one day, mm)
 
-- solar-radiation-flux (Sum of Surface solar radiation downwards, J / m^2)
+- solar-radiation-flux (Sum of Surface solar radiation downwards, $J/m^2$)
 
 - temperature-max (Maximum air temperature at 2-meter, Kelvin)
 
