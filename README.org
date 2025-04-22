@@ -23,7 +23,7 @@ For each image, the auxiliary data should be provided. Here, for each image acqu
 
 - precipitation-flux (total precipitation over one day, mm)
 
-- solar-radiation-flux (Sum of Surface solar radiation downwards, J $m^{-2}$)
+- solar-radiation-flux (Sum of Surface solar radiation downwards, J / m^2)
 
 - temperature-max (Maximum air temperature at 2-meter, Kelvin)
 
@@ -33,13 +33,13 @@ For each image, the auxiliary data should be provided. Here, for each image acqu
 
 - vapour-pressure (Average Vapour pressure, hPa)
 
-- wind-speed (average 10-meter wind component, m $s^{-1}$)
+- wind-speed (average 10-meter wind component, m/s)
 
 We equally use 30m Copernicus Digital Elevation Model (DEM). Both AGERA5 and DEM are spatially resampled to their reference images.
 
 As we use VAE structure, the provided embeddings come in a form of distribution of 6 new features: for each pixel of the input image, we get mean and log-variance values of a new encoded feature resulting in 12 embedded values in total
 
-
+#+ATTR_LATEX: :scale 0.8
 [[file:artwork/mmdc_model_enc.png]]
 
 The repository include several user-defined functions (UDF):
