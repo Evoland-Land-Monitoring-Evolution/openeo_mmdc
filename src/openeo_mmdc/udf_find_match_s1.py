@@ -73,15 +73,14 @@ def match_asc_desc(
     if len(days_asc) > 0 and len(days_desc) > 0:
         return match_asc_desc_both_available(days_asc, days_desc, tolerance)
     # if only one orbit is available for patch
+    if len(days_asc) > 0:
+        asc_ind = np.arange(len(days_asc))
+        days_s1 = days_asc
+        desc_ind = []
     else:
-        if len(days_asc) > 0:
-            asc_ind = np.arange(len(days_asc))
-            days_s1 = days_asc
-            desc_ind = []
-        else:
-            desc_ind = np.arange(len(days_desc))
-            days_s1 = days_desc
-            asc_ind = []
+        desc_ind = np.arange(len(days_desc))
+        days_s1 = days_desc
+        asc_ind = []
 
     return asc_ind, desc_ind, days_s1
 
@@ -100,7 +99,8 @@ def run_matching(input_data: xr.DataArray, tolerance: int = 1) -> Tuple[np.ndarr
     valid_dates_s1_asc = dates[valid_s1_asc]
     valid_dates_s1_desc = dates[valid_s1_desc]
 
-    asc_ind, desc_ind, days_s1 = match_asc_desc(valid_dates_s1_asc, valid_dates_s1_desc, tolerance=tolerance)
+    asc_ind, desc_ind, days_s1 = \
+        match_asc_desc(valid_dates_s1_asc, valid_dates_s1_desc, tolerance=tolerance)
 
     new_data = np.full((len(days_s1), 6, *input_data.data.shape[-2:]), np.nan)
 

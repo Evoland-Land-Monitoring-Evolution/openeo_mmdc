@@ -6,7 +6,7 @@ Provide the user-defined function to call MMDC model
 for Sentinel-1/2 image embeddings
 """
 import sys
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 import xarray as xr
@@ -115,6 +115,63 @@ def dem_height_aspect(dem_data: np.ndarray) -> np.ndarray:
     return np.stack([dem_data, sin_slope, cos_aspect, sin_aspect])
 
 
+def prepare_s2(input_data: np.array) -> Tuple[np.array, np.array, np.array, np.array]:
+    """Prepare S2 data"""
+    image, s2_angles, meteo, dem = (
+        input_data[:, :10],
+        input_data[:, 10:14],
+        input_data[:, 14:14 + 48],
+        input_data[:, -1]
+    )
+
+    dem = np.stack([dem_height_aspect(d) for d in dem])
+    angles = s2_angles_processing(s2_angles)
+    return image, angles, dem, meteo
+
+
+def prepare_s1(input_data: np.array) -> Tuple[np.array, np.array, np.array, np.array]:
+    """Prepare S1 data"""
+    input_data[input_data == np.inf] = np.nan
+    input_data[input_data == -np.inf] = np.nan
+
+    s1_asc, s1_angles_asc, s1_desc, s1_angles_desc, meteo, dem = (
+        input_data[:, :2],
+        input_data[:, 2:3],
+        input_data[:, 3:5],
+        input_data[:, 5:6],
+        input_data[:, 6:6 + 48],
+        input_data[:, -1]
+    )
+    s1_asc[s1_asc == 0] = np.nan
+    s1_desc[s1_desc == 0] = np.nan
+
+    s1_angles_asc[s1_angles_asc == 0] = np.nan
+    s1_angles_desc[s1_angles_desc == 0] = np.nan
+
+    # We compute VH/VV ratio for both ASC and DESC orbits
+    nan_asc = ~(np.isnan(s1_asc).sum(1) > 0)
+    nan_desc = ~(np.isnan(s1_desc).sum(1) > 0)
+
+    ratio_asc = np.full_like(nan_asc, np.nan, dtype=np.float32)
+    ratio_desc = np.full_like(nan_desc, np.nan, dtype=np.float32)
+
+    ratio_asc[nan_asc] = (s1_asc[:, 1] / s1_asc[:, 0] + 1e-05)[nan_asc]
+    ratio_desc[nan_desc] = (s1_desc[:, 1] / s1_desc[:, 0] + 1e-05)[nan_desc]
+
+    image = np.concatenate(
+        [
+            s1_asc, ratio_asc[:, None],
+            s1_desc, ratio_desc[:, None]
+        ],
+        axis=1
+    )
+
+    image = apply_log_to_s1(image)
+    dem = np.stack([dem_height_aspect(d) for d in dem])
+    angles = s1_angles_processing(s1_angles_asc, s1_angles_desc)
+    return image, angles, dem, meteo
+
+
 def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
     """
     Inference function for Sentinel-1/2 embeddings with MMDC.
@@ -146,61 +203,13 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
 
     # We transform input data in right format
     if satellite.lower() == "s2" or input_data.shape[1] == 63:
-        image, s2_angles, meteo, dem = (
-            input_data[:, :10],
-            input_data[:, 10:14],
-            input_data[:, 14:14 + 48],
-            input_data[:, -1]
-        )
-
-        dem = np.stack([dem_height_aspect(d) for d in dem])
-        angles = s2_angles_processing(s2_angles)
-
+        image, angles, dem, meteo = prepare_s2(input_data)
     elif satellite.lower() == "s1" or input_data.shape[1] == 55:
-        input_data[input_data == np.inf] = np.nan
-        input_data[input_data == -np.inf] = np.nan
-
-        s1_asc, s1_angles_asc, s1_desc, s1_angles_desc, meteo, dem = (
-            input_data[:, :2],
-            input_data[:, 2:3],
-            input_data[:, 3:5],
-            input_data[:, 5:6],
-            input_data[:, 6:6 + 48],
-            input_data[:, -1]
-        )
-        s1_asc[s1_asc == 0] = np.nan
-        s1_desc[s1_desc == 0] = np.nan
-
-        s1_angles_asc[s1_angles_asc == 0] = np.nan
-        s1_angles_desc[s1_angles_desc == 0] = np.nan
-
-
-        # We compute VH/VV ratio for both ASC and DESC orbits
-        nan_asc = ~(np.isnan(s1_asc).sum(1) > 0)
-        nan_desc = ~(np.isnan(s1_desc).sum(1) > 0)
-
-        ratio_asc = np.full_like(nan_asc, np.nan, dtype=np.float32)
-        ratio_desc = np.full_like(nan_desc, np.nan, dtype=np.float32)
-
-        ratio_asc[nan_asc] = (s1_asc[:, 1] / s1_asc[:, 0] + 1e-05)[nan_asc]
-        ratio_desc[nan_desc] = (s1_desc[:, 1] / s1_desc[:, 0] + 1e-05)[nan_desc]
-
-        image = np.concatenate(
-            [
-                s1_asc, ratio_asc[:, None],
-                s1_desc, ratio_desc[:, None]
-            ],
-            axis=1
-        )
-
-        image = apply_log_to_s1(image)
-        dem = np.stack([dem_height_aspect(d) for d in dem])
-        angles = s1_angles_processing(s1_angles_asc, s1_angles_desc)
-
+        image, angles, dem, meteo = prepare_s1(input_data)
     else:
         raise IndexError
 
-    input = {
+    input_data = {
         "img": image.astype(np.float32),
         "angles": angles.astype(np.float32),
         "dem": dem.astype(np.float32),
@@ -209,7 +218,7 @@ def run_inference(input_data: np.ndarray, satellite: str = "s2") -> np.ndarray:
 
     # Get the ouput of the exported model
     print("starting inference")
-    res_mu, res_logvar = ort_session.run(None, input, run_options=ro)
+    res_mu, res_logvar = ort_session.run(None, input_data, run_options=ro)
     return np.concatenate((res_mu, res_logvar), axis=1, dtype=np.float32)
 
 

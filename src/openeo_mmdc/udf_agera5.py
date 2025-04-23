@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xr
 from openeo.metadata import CollectionMetadata
 from openeo.udf import XarrayDataCube
-from openeo.udf.debug import inspect
+
 NEW_BANDS = [f"F0{i}" for i in range(10)] + [f"F{i}" for i in range(10, 48)]
 print(NEW_BANDS)
 
@@ -38,6 +38,10 @@ def check_datacube(cube: xr.DataArray):
 def run_date_selection(
         input_data: np.ndarray, dates: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Select dates for AGERA5
+    and create 6-days mini-series with 8 weather variables
+    """
     meteo_data = input_data[:, :-1]
     mask_data = input_data[:, -1]
 

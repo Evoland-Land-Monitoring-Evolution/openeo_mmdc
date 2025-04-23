@@ -10,18 +10,17 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
-import numpy as np
-from openeo import DataCube
+from openeo import DataCube, UDF
 
 DEPENDENCIES_URL: str = (
     "https://artifactory.vgt.vito.be:443/auxdata-public/openeo/onnx_dependencies.zip"
 )
 
 import openeo
-from openeo_mmdc import __version__
 from shapely import geometry
+from openeo_mmdc import __version__
 
 __author__ = "Ekaterina Kalinicheva"
 __copyright__ = "Ekaterina Kalinicheva"
@@ -31,6 +30,7 @@ _logger = logging.getLogger(__name__)
 
 
 def default_bands_list_agera5() -> list[str]:
+    """Default AGERA variables"""
     return [
         "dewpoint-temperature",
         "precipitation-flux",
@@ -54,6 +54,14 @@ def default_angles_list(satellite: str) -> list[str]:
     if satellite.lower() == "s2":
         return ["sunAzimuthAngles", "sunZenithAngles", "viewAzimuthMean", "viewZenithMean"]
     return ["local_incidence_angle"]  # For S1 incidence angle is defined in .sar_backscatter(...)
+
+
+def open_udf(file_name: str) -> UDF:
+    """Open UDF from file"""
+    return openeo.UDF.from_file(
+        os.path.join(os.path.dirname(__file__), file_name),
+        runtime="Python-Jep"
+    )
 
 
 @dataclass(frozen=True)
@@ -87,7 +95,8 @@ def process(parameters: Parameters, output: str) -> None:
             parameters.collection,
             spatial_extent=parameters.spatial_extent,
             temporal_extent=[parameters.start_date, parameters.end_date],
-            bands=default_bands_list(parameters.satellite) + default_angles_list(parameters.satellite),
+            bands=default_bands_list(parameters.satellite) +
+                  default_angles_list(parameters.satellite),
             max_cloud_cover=parameters.max_cloud_cover,
             fetch_metadata=True
         )
@@ -119,8 +128,10 @@ def process(parameters: Parameters, output: str) -> None:
                 options=None,
             )
 
-            sat_cube_orbit = sat_cube_orbit.rename_labels(dimension="bands", target=["VV_" + orbit, "VH_" + orbit,
-                                                                                     "local_incidence_angle_" + orbit])
+            sat_cube_orbit = sat_cube_orbit.rename_labels(
+                dimension="bands",
+                target=["VV_" + orbit, "VH_" + orbit, "local_incidence_angle_" + orbit]
+            )
 
             if sat_cube is None:
                 sat_cube = sat_cube_orbit
@@ -128,9 +139,7 @@ def process(parameters: Parameters, output: str) -> None:
                 sat_cube = sat_cube.merge_cubes(sat_cube_orbit)
             print("metadata s1", sat_cube_orbit.metadata)
 
-        udf_file_match_s1 = os.path.join(os.path.dirname(__file__), f"udf_find_match_s1.py")
-        udf_match_s1 = openeo.UDF.from_file(udf_file_match_s1, runtime="Python-Jep")
-        sat_cube = sat_cube.apply_dimension(udf_match_s1)
+        sat_cube = sat_cube.apply_dimension(open_udf("udf_find_match_s1.py"))
 
         print("Create mask")
         mask_dates = sat_cube.band("VV_ASCENDING") * 0
@@ -141,17 +150,12 @@ def process(parameters: Parameters, output: str) -> None:
     mask_dates = mask_dates.add_dimension(name="bands", label="mask", type="bands")
     print("mask dates", mask_dates.metadata)
 
-    udf_file_t = os.path.join(os.path.dirname(__file__), f"udf_t.py")
-    udf_time = openeo.UDF.from_file(udf_file_t, runtime="Python-Jep")
-    mask_for_agera5 = mask_dates.apply_neighborhood(udf_time, size=[
-        {"dimension": "x",
-         "value": 256,
-         "unit": "px"},
-        {"dimension": "y",
-         "value": 256,
-         "unit": "px"},
-    ], overlap=[])
-
+    mask_for_agera5 = mask_dates.apply_neighborhood(
+        open_udf("udf_t.py"),
+        size=[{"dimension": "x", "value": 256, "unit": "px"},
+              {"dimension": "y", "value": 256, "unit": "px"}],
+        overlap=[]
+    )
 
     print(f"Get AGERA... "
           f"For each available day d of {parameters.satellite.upper()} image, "
@@ -187,26 +191,14 @@ def process(parameters: Parameters, output: str) -> None:
     agera5 = agera5.merge_cubes(mask_for_agera5)
     print("metadata", agera5.metadata)
 
-    # Handle optional overlap parameter
-    overlap = []
-    if parameters.overlap is not None:
-        overlap = [
-            {"dimension": "x", "value": parameters.overlap, "unit": "px"},
-            {"dimension": "y", "value": parameters.overlap, "unit": "px"},
-        ]
-
     # 6 days mini-series of AGERA5 with 8 variables
     # Reshape them to T x 48 x H x W, where T is length of image SITS
-    udf_file_agera5 = os.path.join(os.path.dirname(__file__), f"udf_agera5.py")
-    udf_agera5 = openeo.UDF.from_file(udf_file_agera5, runtime="Python-Jep")
-    mini_agera5 = agera5.apply_neighborhood(udf_agera5, size=[
-        {"dimension": "x",
-         "value": 256,
-         "unit": "px"},
-        {"dimension": "y",
-         "value": 256,
-         "unit": "px"},
-    ], overlap=[])
+    agera5 = agera5.apply_neighborhood(
+        open_udf("udf_agera5.py"),
+        size=[{"dimension": "x", "value": 256, "unit": "px"},
+              {"dimension": "y", "value": 256, "unit": "px"}],
+        overlap=[]
+    )
 
     # Get DEM and do spatio-temporal resampling as S1/S2
     dem = connection.load_collection(
@@ -216,21 +208,10 @@ def process(parameters: Parameters, output: str) -> None:
     dem = dem.resample_cube_spatial(sat_cube, method="cubic").filter_spatial(geometry_box)
 
     # Merge all datacubes S1/S2 + AGERA5 + DEM
-    sat_cube = sat_cube.merge_cubes(mini_agera5).merge_cubes(dem.max_time())
+    sat_cube = sat_cube.merge_cubes(agera5).merge_cubes(dem.max_time())
     print("metadata", sat_cube.metadata)
 
-    # job = sat_cube.create_job(
-    #     title=f"mmdc_{parameters.satellite}_collection",
-    #     description=f"mmdc_{parameters.satellite}",
-    #     out_format="netCDF",
-    #     sample_by_feature=False,
-    #     job_options=job_options,
-    # )
-    # job.start_job()
-
     # Process the final cube with the inference UDF
-    udf_file = os.path.join(os.path.dirname(__file__), f"udf.py")
-    udf = openeo.UDF.from_file(udf_file, runtime="Python-Jep", context={"from_parameter": "context"})
     job_options = {
         "udf-dependency-archives": [
             f"{DEPENDENCIES_URL}#tmp/extra_venv",
@@ -248,8 +229,16 @@ def process(parameters: Parameters, output: str) -> None:
         "logging-threshold": "info",
     }
 
+    # Handle optional overlap parameter
+    overlap = []
+    if parameters.overlap is not None:
+        overlap = [
+            {"dimension": "x", "value": parameters.overlap, "unit": "px"},
+            {"dimension": "y", "value": parameters.overlap, "unit": "px"},
+        ]
+
     mmdc_sat_cube = sat_cube.apply_neighborhood(
-        udf,
+        open_udf("udf.py"),
         size=[
             {"dimension": "x",
              "value": parameters.patch_size - parameters.overlap * 2,
@@ -264,7 +253,8 @@ def process(parameters: Parameters, output: str) -> None:
 
     # Download embeddings
     download_job1 = mmdc_sat_cube.save_result("netCDF").create_job(
-        title=f"mmdc_{parameters.satellite}", job_options=job_options
+        title=f"mmdc_{parameters.satellite}",
+        job_options=job_options
     )
     download_job1.start_and_wait()
     os.makedirs(output, exist_ok=True)
