@@ -56,11 +56,12 @@ def default_angles_list(satellite: str) -> list[str]:
     return ["local_incidence_angle"]  # For S1 incidence angle is defined in .sar_backscatter(...)
 
 
-def open_udf(file_name: str) -> UDF:
+def open_udf(file_name: str, context: bool = False) -> UDF:
     """Open UDF from file"""
     return openeo.UDF.from_file(
         os.path.join(os.path.dirname(__file__), file_name),
-        runtime="Python-Jep"
+        runtime="Python-Jep",
+        context={"from_parameter": "context"} if context else None
     )
 
 
@@ -238,7 +239,7 @@ def process(parameters: Parameters, output: str) -> None:
         ]
 
     mmdc_sat_cube = sat_cube.apply_neighborhood(
-        open_udf("udf.py"),
+        open_udf("udf.py", context=True),
         size=[
             {"dimension": "x",
              "value": parameters.patch_size - parameters.overlap * 2,
